@@ -9,7 +9,7 @@ use Youvision\ThinkHtml\Exception\GenerateException;
 /**
  * 静态网站生成器
  *
- * 读取 template/{theme} 目录下的模板，结合站点数据与页面数据渲染，
+ * 读取模板目录或模板文件，结合站点数据与页面数据渲染，
  * 并将结果写入输出目录，最终返回生成的 HTML 文件路径。
  */
 class Generator
@@ -20,21 +20,19 @@ class Generator
      * 内置默认配置，与 config/html.php 保持一致，便于脱离 ThinkPHP 独立使用
      */
     protected array $defaults = [
-        'template_path'   => null,
-        'site_path'       => null,
-        'theme'           => 'default',
-        'output_path'     => null,
+        'template_path'    => null,
+        'output_path'      => null,
         'default_template' => 'index',
-        'view_suffix'     => 'html',
-        'cache_path'      => null,
-        'overwrite'       => true,
-        'suffix'          => 'html',
-        'charset'         => 'utf-8',
-        'tpl_begin'       => '{',
-        'tpl_end'         => '}',
-        'taglib_begin'    => '{',
-        'taglib_end'      => '}',
-        'debug'           => false,
+        'view_suffix'      => 'html',
+        'cache_path'       => null,
+        'overwrite'        => true,
+        'suffix'           => 'html',
+        'charset'          => 'utf-8',
+        'tpl_begin'        => '{',
+        'tpl_end'          => '}',
+        'taglib_begin'     => '{',
+        'taglib_end'       => '}',
+        'debug'            => false,
     ];
 
     public function __construct(array $config = [])
@@ -45,16 +43,20 @@ class Generator
     /**
      * 生成单个静态页面
      *
-     * @param array       $data          页面数据，titleurl 决定输出路径，template 可指定模板
-     * @param string|null $site_path     站点数据文件路径，支持 .php（返回数组）与 .json
-     * @param string|null $template_path 模板目录，可为模板根目录或主题目录
+     * @param array $data 页面数据，包含 site_id（站点根目录）、titleurl（HTML 路径）、template（模板名）等字段
      *
      * @return string 生成文件的绝对路径
      */
-    public function make(array $data, ?string $site_path = null, ?string $template_path = null): string
+    public function make(array $data): string
     {
+        $siteId   = $this->resolveSiteId((string) ($data['site_id'] ?? ''));
         $relative = $this->resolveRelativePath((string) ($data['titleurl'] ?? ''));
-        $target   = $this->outputRoot() . '/' . $relative;
+
+        if ($siteId !== '') {
+            $relative = $siteId . '/' . $relative;
+        }
+
+        $target = $this->outputRoot() . '/' . $relative;
 
         $this->ensureDirectory(dirname($target));
 
@@ -64,8 +66,7 @@ class Generator
             return $target;
         }
 
-        $site = $this->loadSite((string) ($site_path ?? ''));
-        $html = $this->render($site, $data, $template_path);
+        $html = $this->render($data);
 
         $charset = strtolower((string) $this->config['charset']);
         if (!in_array($charset, ['utf-8', 'utf8'], true) && function_exists('mb_convert_encoding')) {
@@ -82,27 +83,17 @@ class Generator
     }
 
     /**
-     * 批量生成静态页面
-     *
-     * @param array       $pages         页面数据集合，每个元素的结构与 make() 的 $data 一致
-     * @param string|null $site_path     站点数据文件路径
-     * @param string|null $template_path 模板目录
-     *
-     * @return string[] 生成成功的文件路径列表
+     * 规范化站点 ID，作为输出根目录下的站点目录名
      */
-    public function build(array $pages, ?string $site_path = null, ?string $template_path = null): array
+    protected function resolveSiteId(string $site_id): string
     {
-        $files = [];
+        $site_id = trim($site_id);
 
-        foreach ($pages as $page) {
-            if (!is_array($page)) {
-                continue;
-            }
-
-            $files[] = $this->make($page, $site_path, $template_path);
+        if ($site_id === '') {
+            return '';
         }
 
-        return $files;
+        return (string) preg_replace('/[^0-9A-Za-z_\-]/', '', $site_id);
     }
 
     /**
@@ -164,14 +155,13 @@ class Generator
     /**
      * 渲染模板并返回 HTML 内容
      */
-    protected function render(array $site, array $data, ?string $template_path = null): string
+    protected function render(array $data): string
     {
-        $templateFile = $this->resolveTemplateFile($data, $template_path);
+        $templateFile = $this->resolveTemplateFile($data);
         $template     = basename($templateFile);
         $engine       = $this->engine(dirname($templateFile));
 
         $vars = array_merge($data, [
-            'site' => $site,
             'data' => $data,
         ]);
 
@@ -225,48 +215,7 @@ class Generator
     }
 
     /**
-     * 读取站点数据文件
-     */
-    protected function loadSite(string $site_path): array
-    {
-        if ($site_path === '') {
-            $site_path = $this->config['site_path'];
-        }
 
-        if (!is_string($site_path) || $site_path === '') {
-            return [];
-        }
-
-        if (!is_file($site_path)) {
-            throw new GenerateException(sprintf('站点数据文件不存在：%s', $site_path));
-        }
-
-        $extension = strtolower(pathinfo($site_path, PATHINFO_EXTENSION));
-
-        if ($extension === 'php') {
-            $site = require $site_path;
-        } else {
-            $content = file_get_contents($site_path);
-
-            if ($content === false) {
-                throw new GenerateException(sprintf('无法读取站点数据文件：%s', $site_path));
-            }
-
-            $site = json_decode($content, true);
-
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new GenerateException(sprintf('站点数据文件解析失败：%s（%s）', $site_path, json_last_error_msg()));
-            }
-        }
-
-        if (!is_array($site)) {
-            throw new GenerateException(sprintf('站点数据文件必须为数组：%s', $site_path));
-        }
-
-        return $site;
-    }
-
-    /**
      * 创建模板引擎实例
      */
     protected function engine(string $viewDir): Template
@@ -294,27 +243,14 @@ class Generator
     /**
      * 定位模板文件
      *
-     * $template_path 支持三种形式：
-     * 1. 模板文件：template/default.html
-     * 2. 主题目录：template/default
-     * 3. 模板根目录：template（自动拼接 theme，并支持回退 default 模板）
+     * 模板路径支持模板目录（template）或模板文件（template/default.html）
      */
-    protected function resolveTemplateFile(array $data, ?string $template_path = null): string
+    protected function resolveTemplateFile(array $data): string
     {
-        $paths = [];
-
-        if (is_string($template_path) && $template_path !== '') {
-            $paths[] = $template_path;
-        }
-
         $configured = $this->config['template_path'];
 
         if (is_string($configured) && $configured !== '') {
-            $paths[] = $configured;
-        }
-
-        foreach ($paths as $path) {
-            $file = $this->locateTemplate($path, $data);
+            $file = $this->locateTemplate($configured, $data);
 
             if ($file !== null) {
                 return $file;
@@ -341,7 +277,7 @@ class Generator
 
         throw new GenerateException(sprintf(
             '未找到模板文件，模板路径：%s；自动探测目录：%s',
-            $paths === [] ? '未指定' : implode('、', $paths),
+            is_string($configured) && $configured !== '' ? $configured : '未指定',
             implode('、', $candidates)
         ));
     }
@@ -366,43 +302,21 @@ class Generator
             return null;
         }
 
-        $themePath = $this->resolveThemePath($path);
-        $names     = array_unique([
+        $names = array_unique([
             $this->resolveTemplate($data),
             (string) $this->config['default_template'],
             'default',
         ]);
 
         foreach ($names as $name) {
-            foreach (array_unique([$themePath, $path]) as $dir) {
-                $file = $dir . '/' . $name . $suffix;
+            $file = $path . '/' . $name . $suffix;
 
-                if (is_file($file)) {
-                    return $file;
-                }
+            if (is_file($file)) {
+                return $file;
             }
         }
 
         return null;
-    }
-
-    /**
-     * 解析模板目录：传入模板根目录时自动拼接主题，传入主题目录时直接使用
-     */
-    protected function resolveThemePath(string $path): string
-    {
-        $path  = rtrim(str_replace('\\', '/', $path), '/');
-        $theme = (string) $this->config['theme'];
-
-        if ($path === '') {
-            throw new GenerateException('模板目录不能为空');
-        }
-
-        if ($theme !== '' && is_dir($path . '/' . $theme)) {
-            return $path . '/' . $theme;
-        }
-
-        return $path;
     }
 
     /**
