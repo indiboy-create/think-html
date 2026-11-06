@@ -1,0 +1,13 @@
+<title>{$category.page_title} - {$site.name}</title>
+<h1>{$category.name}</h1>
+<ul class="articles">
+{volist name="articles" id="a"}
+    <li><a href="{$a.url}">{$a.title}</a></li>
+{/volist}
+</ul>
+{if condition="$pagination.pages > 1"}
+<div class="pagination">
+    {if condition="$pagination.prev != ''"}<a href="{$pagination.prev}">上一页</a>{/if}
+    <a href="{$pagination.next}">下一页</a>
+</div>
+{/if}

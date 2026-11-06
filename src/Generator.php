@@ -21,6 +21,7 @@ class Generator
      */
     protected array $defaults = [
         'template_path'   => null,
+        'site_path'       => null,
         'theme'           => 'default',
         'output_path'     => null,
         'default_template' => 'index',
@@ -44,15 +45,15 @@ class Generator
     /**
      * 生成单个静态页面
      *
-     * @param array       $site 站点数据，模板中以 $site 访问
-     * @param array       $data 页面数据，模板中以对应键名访问；titleurl 决定输出路径
-     * @param string|null $file 自定义 HTML 文件路径，为 null 时使用 $data['titleurl']
+     * @param array       $data          页面数据，titleurl 决定输出路径，template 可指定模板
+     * @param string|null $site_path     站点数据文件路径，支持 .php（返回数组）与 .json
+     * @param string|null $template_path 模板目录，可为模板根目录或主题目录
      *
      * @return string 生成文件的绝对路径
      */
-    public function make(array $site, array $data, ?string $file = null): string
+    public function make(array $data, ?string $site_path = null, ?string $template_path = null): string
     {
-        $relative = $this->resolveRelativePath($file ?? (string) ($data['titleurl'] ?? ''));
+        $relative = $this->resolveRelativePath((string) ($data['titleurl'] ?? ''));
         $target   = $this->outputRoot() . '/' . $relative;
 
         $this->ensureDirectory(dirname($target));
@@ -63,7 +64,8 @@ class Generator
             return $target;
         }
 
-        $html = $this->render($site, $data);
+        $site = $this->loadSite((string) ($site_path ?? ''));
+        $html = $this->render($site, $data, $template_path);
 
         $charset = strtolower((string) $this->config['charset']);
         if (!in_array($charset, ['utf-8', 'utf8'], true) && function_exists('mb_convert_encoding')) {
@@ -82,12 +84,13 @@ class Generator
     /**
      * 批量生成静态页面
      *
-     * @param array $site  站点数据
-     * @param array $pages 页面数据集合，每个元素的结构与 make() 的 $data 一致
+     * @param array       $pages         页面数据集合，每个元素的结构与 make() 的 $data 一致
+     * @param string|null $site_path     站点数据文件路径
+     * @param string|null $template_path 模板目录
      *
      * @return string[] 生成成功的文件路径列表
      */
-    public function build(array $site, array $pages): array
+    public function build(array $pages, ?string $site_path = null, ?string $template_path = null): array
     {
         $files = [];
 
@@ -96,7 +99,7 @@ class Generator
                 continue;
             }
 
-            $files[] = $this->make($site, $page);
+            $files[] = $this->make($page, $site_path, $template_path);
         }
 
         return $files;
@@ -161,10 +164,11 @@ class Generator
     /**
      * 渲染模板并返回 HTML 内容
      */
-    protected function render(array $site, array $data): string
+    protected function render(array $site, array $data, ?string $template_path = null): string
     {
-        $template = $this->resolveTemplate($data);
-        $engine   = $this->engine();
+        $templateFile = $this->resolveTemplateFile($data, $template_path);
+        $template     = basename($templateFile);
+        $engine       = $this->engine(dirname($templateFile));
 
         $vars = array_merge($data, [
             'site' => $site,
@@ -175,7 +179,7 @@ class Generator
         ob_implicit_flush(false);
 
         try {
-            $engine->fetch($template, $vars);
+            $engine->fetch($templateFile, $vars);
             $html = ob_get_clean();
         } catch (\Throwable $e) {
             ob_end_clean();
@@ -221,21 +225,63 @@ class Generator
     }
 
     /**
+     * 读取站点数据文件
+     */
+    protected function loadSite(string $site_path): array
+    {
+        if ($site_path === '') {
+            $site_path = $this->config['site_path'];
+        }
+
+        if (!is_string($site_path) || $site_path === '') {
+            return [];
+        }
+
+        if (!is_file($site_path)) {
+            throw new GenerateException(sprintf('站点数据文件不存在：%s', $site_path));
+        }
+
+        $extension = strtolower(pathinfo($site_path, PATHINFO_EXTENSION));
+
+        if ($extension === 'php') {
+            $site = require $site_path;
+        } else {
+            $content = file_get_contents($site_path);
+
+            if ($content === false) {
+                throw new GenerateException(sprintf('无法读取站点数据文件：%s', $site_path));
+            }
+
+            $site = json_decode($content, true);
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new GenerateException(sprintf('站点数据文件解析失败：%s（%s）', $site_path, json_last_error_msg()));
+            }
+        }
+
+        if (!is_array($site)) {
+            throw new GenerateException(sprintf('站点数据文件必须为数组：%s', $site_path));
+        }
+
+        return $site;
+    }
+
+    /**
      * 创建模板引擎实例
      */
-    protected function engine(): Template
+    protected function engine(string $viewDir): Template
     {
-        $themePath = $this->templateRoot();
-
-        if (!is_dir($themePath)) {
-            throw new GenerateException(sprintf('模板主题目录不存在：%s', $themePath));
+        if (!class_exists(Template::class)) {
+            throw new GenerateException(
+                '未检测到模板引擎 think\Template，请先安装 topthink/think-view（ThinkPHP 8 项目默认已内置）'
+            );
         }
 
         $cachePath = $this->cacheRoot();
         $this->ensureDirectory($cachePath);
 
         return new Template([
-            'view_path'    => $themePath . '/',
+            'view_path'    => rtrim(str_replace('\\', '/', $viewDir), '/') . '/',
             'view_suffix'  => $this->config['view_suffix'],
             'cache_path'   => $cachePath . '/',
             'tpl_begin'    => $this->config['tpl_begin'],
@@ -246,14 +292,33 @@ class Generator
     }
 
     /**
-     * 模板主题目录：模板根目录 / 主题
+     * 定位模板文件
+     *
+     * $template_path 支持三种形式：
+     * 1. 模板文件：template/default.html
+     * 2. 主题目录：template/default
+     * 3. 模板根目录：template（自动拼接 theme，并支持回退 default 模板）
      */
-    protected function templateRoot(): string
+    protected function resolveTemplateFile(array $data, ?string $template_path = null): string
     {
-        $path = $this->config['template_path'];
+        $paths = [];
 
-        if (is_string($path) && $path !== '') {
-            return rtrim(str_replace('\\', '/', $path), '/') . '/' . $this->config['theme'];
+        if (is_string($template_path) && $template_path !== '') {
+            $paths[] = $template_path;
+        }
+
+        $configured = $this->config['template_path'];
+
+        if (is_string($configured) && $configured !== '') {
+            $paths[] = $configured;
+        }
+
+        foreach ($paths as $path) {
+            $file = $this->locateTemplate($path, $data);
+
+            if ($file !== null) {
+                return $file;
+            }
         }
 
         $candidates = [];
@@ -267,15 +332,77 @@ class Generator
         $candidates[] = rtrim(str_replace('\\', '/', dirname(__DIR__)), '/') . '/template';
 
         foreach (array_unique($candidates) as $dir) {
-            if (is_dir($dir . '/' . $this->config['theme'])) {
-                return $dir . '/' . $this->config['theme'];
+            $file = $this->locateTemplate($dir, $data);
+
+            if ($file !== null) {
+                return $file;
             }
         }
 
         throw new GenerateException(sprintf(
-            '未找到模板目录，已尝试：%s',
+            '未找到模板文件，模板路径：%s；自动探测目录：%s',
+            $paths === [] ? '未指定' : implode('、', $paths),
             implode('、', $candidates)
         ));
+    }
+
+    /**
+     * 在文件或目录中查找匹配的模板文件
+     */
+    protected function locateTemplate(string $path, array $data): ?string
+    {
+        $path   = rtrim(str_replace('\\', '/', $path), '/');
+        $suffix = '.' . ltrim((string) $this->config['view_suffix'], '.');
+
+        if (is_file($path)) {
+            return $path;
+        }
+
+        if (is_file($path . $suffix)) {
+            return $path . $suffix;
+        }
+
+        if (!is_dir($path)) {
+            return null;
+        }
+
+        $themePath = $this->resolveThemePath($path);
+        $names     = array_unique([
+            $this->resolveTemplate($data),
+            (string) $this->config['default_template'],
+            'default',
+        ]);
+
+        foreach ($names as $name) {
+            foreach (array_unique([$themePath, $path]) as $dir) {
+                $file = $dir . '/' . $name . $suffix;
+
+                if (is_file($file)) {
+                    return $file;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 解析模板目录：传入模板根目录时自动拼接主题，传入主题目录时直接使用
+     */
+    protected function resolveThemePath(string $path): string
+    {
+        $path  = rtrim(str_replace('\\', '/', $path), '/');
+        $theme = (string) $this->config['theme'];
+
+        if ($path === '') {
+            throw new GenerateException('模板目录不能为空');
+        }
+
+        if ($theme !== '' && is_dir($path . '/' . $theme)) {
+            return $path . '/' . $theme;
+        }
+
+        return $path;
     }
 
     /**

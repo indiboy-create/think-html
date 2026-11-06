@@ -5,9 +5,18 @@
 // +----------------------------------------------------------------------
 
 return [
-    // 模板根目录，模板实际读取路径为：模板根目录 / 主题目录 / 模板文件
-    // null：自动探测，优先使用项目根目录下的 template 目录，其次使用本包自带的 template 目录
+    // 模板路径，支持三种形式：
+    // 1. 模板文件：template/default.html
+    // 2. 主题目录：template/default
+    // 3. 模板根目录：template（自动拼接 theme，找不到页面模板时回退 default 模板）
+    // null：自动探测，优先使用项目根目录下的 template，其次使用本包自带的 template
+    // html_make() 的 $template_path 参数可覆盖此项
     'template_path' => null,
+
+    // 站点数据文件路径，支持 .php（返回数组）与 .json 两种格式
+    // null：不读取站点文件，模板中的 $site 为空数组
+    // html_make() 的 $site_path 参数可覆盖此项
+    'site_path' => null,
 
     // 默认模板主题（即 template 下的一级目录名），例如 default
     'theme' => 'default',
