@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+    <meta charset="utf-8">
+    <title>{$site.title}</title>
+    <meta name="keywords" content="{$site.keywords}">
+    <meta name="description" content="{$site.description}">
+</head>
+<body>
+<h1>{$site.name}</h1>
+<ul class="nav">
+{volist name="categories" id="c"}
+    <li>
+        <a href="{$c.url}">{$c.name}</a>
+        {if condition="!empty($c['children'])"}
+        <ul>
+            {volist name="c.children" id="cc"}
+            <li><a href="{$cc.url}">{$cc.name}</a></li>
+            {/volist}
+        </ul>
+        {/if}
+    </li>
+{/volist}
+</ul>
+<h2>最新内容</h2>
+<ul class="articles">
+{volist name="articles" id="a"}
+    <li><a href="{$a.url}">{$a.title}</a> <span>{$a.published_text}</span></li>
+{/volist}
+</ul>
+</body>
+</html>

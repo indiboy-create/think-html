@@ -1,0 +1,44 @@
+{
+    "name": "youvision/think-html",
+    "description": "基于 ThinkPHP 8 的静态网站生成器，读取 template/default 模板并生成静态 HTML 页面",
+    "type": "library",
+    "keywords": [
+        "thinkphp",
+        "thinkphp8",
+        "static site generator",
+        "html",
+        "template"
+    ],
+    "license": "MIT",
+    "require": {
+        "php": ">=8.0",
+        "topthink/think-template": "^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Youvision\\ThinkHtml\\": "src/"
+        },
+        "files": [
+            "src/helper.php"
+        ]
+    },
+    "extra": {
+        "think": {
+            "services": [
+                "Youvision\\ThinkHtml\\Service"
+            ]
+        }
+    },
+    "config": {
+        "preferred-install": "dist",
+        "sort-packages": true
+    },
+    "scripts": {
+        "test": [
+            "@php tests/verify.php",
+            "@php tests/service-check.php"
+        ]
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
